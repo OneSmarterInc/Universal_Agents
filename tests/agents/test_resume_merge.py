@@ -227,9 +227,8 @@ class LayoutRecordTests(SimpleTestCase):
             )
         )
 
-    def test_a_degree_the_checks_reject_falls_back_to_the_layout(self):
-        # The model picks the degree's words but no university; the evidence
-        # check drops that record, so the plain layout line is read instead.
+    def education_read_from(self, title, organization):
+        """The education read when the model selects these words (first, last) of the degree line."""
         cv = (
             'CURRICULUM VITAE\nDaniel Okafor\nMechanical Engineer\n'
             'Education\nB.Eng. Mechanical Engineering, University of Lagos, 2012 - 2016'
@@ -238,16 +237,17 @@ class LayoutRecordTests(SimpleTestCase):
         def reply(**kwargs):
             if 'education' not in kwargs['schema'].get('properties', {}):
                 return empty_reply(**kwargs)
+            # The last token with each word: the degree line's.
             index = {
                 word: int(number)
                 for number, word in re.findall(r'^(\d+): (\S+)$', kwargs['messages'][-1]['content'], re.M)
             }
-            span = {'first': index['Mechanical'], 'last': index['Engineering']}
-            return Completion(
-                data={
-                    'education': [{'title': span, 'organization': None, 'start_date': None, 'end_date': None}]
-                }
-            )
+
+            def span(words):
+                return {'first': index[words[0]], 'last': index[words[1]]} if words else None
+
+            selection = {'title': span(title), 'organization': span(organization), 'start_date': None}
+            return Completion(data={'education': [{**selection, 'end_date': None}]})
 
         with (
             patch(
@@ -258,9 +258,26 @@ class LayoutRecordTests(SimpleTestCase):
         ):
             factory.return_value.__enter__.return_value.generate.side_effect = reply
             result = extract_local_resume(cv, {})
+        return [(e['title'], e['organization']) for e in result['education']]
+
+    def test_a_degree_the_checks_reject_falls_back_to_the_layout(self):
+        # The degree's words but no university: the evidence check drops that record.
         self.assertEqual(
-            [(e['title'], e['organization']) for e in result['education']],
+            self.education_read_from(('Mechanical', 'Engineering'), None),
             [('B.Eng. Mechanical Engineering', 'University of Lagos')],
+        )
+
+    def test_a_degree_cut_in_the_wrong_place_is_read_from_the_layout(self):
+        # Seen with qwen3:1.7b-q8_0: "Engineering, University" and "of Lagos".
+        self.assertEqual(
+            self.education_read_from(('Engineering', 'University'), ('of', 'Lagos')),
+            [('B.Eng. Mechanical Engineering', 'University of Lagos')],
+        )
+
+    def test_a_clean_model_reading_of_the_degree_is_kept(self):
+        self.assertEqual(
+            self.education_read_from(('Mechanical', 'Engineering'), ('University', 'Lagos')),
+            [('Mechanical Engineering', 'University of Lagos')],
         )
 
     def test_layout_reader_cases(self):

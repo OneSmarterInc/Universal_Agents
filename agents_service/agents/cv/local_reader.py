@@ -171,7 +171,32 @@ def _education(chunk, reply, supported_resume):
     layout = source_education.layout_education(chunk)
     if layout and len(layout) > len(kept):
         education = layout  # the document shows more entries plainly than the model's checked answer
+    elif layout:
+        education = [_cleaner_split(record, layout) for record in education]
     return {'education': education}
+
+
+def _school_misplaced(record):
+    # The school's name in the degree title, or no school named as the organization.
+    return source_education.names_institution(record['title'] or '') or not (
+        source_education.names_institution(record['organization'] or '')
+    )
+
+
+def _cleaner_split(record, layout):
+    """The layout's reading of the same line when it puts degree and school in their places.
+
+    A small model sometimes cuts "B.Eng. Mechanical Engineering, University of Lagos"
+    into "Engineering, University" and "of Lagos": every word is in the CV, so the
+    evidence check keeps it.
+    """
+    if not _school_misplaced(record):
+        return record
+    for plain in layout:
+        same_line = record['evidence'] in plain['evidence'] or plain['evidence'] in record['evidence']
+        if same_line and not _school_misplaced(plain):
+            return plain
+    return record
 
 
 def _records(fields, chunk, schema, reply, supported_resume):
