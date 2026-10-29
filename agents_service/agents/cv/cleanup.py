@@ -91,14 +91,22 @@ def _holds_headings(text):
     return len(headings) >= 2
 
 
+# Fewer words is a name or a job title the model filed as the summary ("Daniel Example").
+MIN_SUMMARY_WORDS = 4
+
+
+def _not_a_summary(text):
+    return _holds_headings(text) or len(str(text or '').split()) < MIN_SUMMARY_WORDS
+
+
 def clean_summary(value):
-    """None when the 'summary' is a block of the CV holding other sections."""
-    return None if isinstance(value, str) and _holds_headings(value) else value
+    """None when the 'summary' is a block of the CV holding other sections, or too short to be one."""
+    return None if isinstance(value, str) and _not_a_summary(value) else value
 
 
 def clean_summary_variants(entries):
     """The summary alternatives whose own text is a summary (the quote may be longer)."""
-    return [entry for entry in entries if not _holds_headings(entry.get('value'))]
+    return [entry for entry in entries if not _not_a_summary(entry.get('value'))]
 
 
 def _split_outside_brackets(text):
@@ -293,7 +301,13 @@ STREET_WORDS = re.compile(
 )
 GRADUATION_CUE = re.compile(r'graduat|expected|batch|class of|passing|pass(?:ed)? out|completion', re.I)
 DEGREE_LEVEL = re.compile(
-    r'bachelor|master|b\.?\s?(?:e|tech|sc|com|a|ca|ba)\b|m\.?\s?(?:e|tech|sc|ba|ca)\b|diploma|ph\.?d', re.I
+    r'bachelor|master|b\.?\s?(?:e|eng|tech|sc|s|com|a|ca|ba)\b|m\.?\s?(?:e|eng|tech|sc|s|ba|ca)\b|diploma|ph\.?d',
+    re.I,
+)
+# "CGPA: 3.9/4.0", "GPA 8.6 out of 10": a grade written with its scale.
+GPA_WITH_SCALE = re.compile(
+    r'\b(?:c?gpa|grade point average)\b\s*[:\-–]?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:/|out of)\s*(\d{1,3}(?:\.\d{1,2})?)(?![\d.])',
+    re.I,
 )
 
 
@@ -408,10 +422,14 @@ def _bare_key(text):
     return _key(re.sub(r'\s*\(.*?\)\s*', ' ', text))
 
 
-def add_document_skills(skills, source):
-    """The model's skills, then any skill under the skills heading that it missed."""
+def add_document_skills(skills, source, languages=()):
+    """The model's skills, then any skill under the skills heading that it missed.
+
+    A spoken language already found ("Languages: English | Korean" right after the skills
+    list) stays a language, not a skill.
+    """
     result = list(skills or [])
-    keys = {_key(s) for s in result} | {_bare_key(s) for s in result}
+    keys = {_key(s) for s in result} | {_bare_key(s) for s in result} | {_key(s) for s in languages or []}
     model_keys = [_key(s) for s in result]
     for item in skills_from_document(source):
         if any(_key(item) in key for key in model_keys):
@@ -460,6 +478,20 @@ def clean_location(value):
     return cleaned or value
 
 
+def gpa_from_document(source):
+    """(gpa, scale) when the CV writes one grade with its scale; None when there is none
+    or more than one, so the model's choice is never replaced by a guess."""
+    found = {}
+    for match in GPA_WITH_SCALE.finditer(source):
+        gpa, scale = float(match.group(1)), match.group(2)
+        if gpa <= float(scale):
+            found.setdefault((gpa, scale), match.group())
+    if len(found) != 1:
+        return None
+    (((gpa, scale), quote),) = found.items()
+    return {'value': gpa, 'evidence': quote}, {'value': scale, 'evidence': quote}
+
+
 def _graduation_year_ok(year, education, source):
     """A graduation year is kept when the CV ties it to finishing a degree: the end year of
     a degree entry, or a line that says so ("Expected graduation 2027", "Batch of 2026")."""
@@ -491,7 +523,13 @@ def tidy_scalars(data, variants, source):
     if isinstance(data.get('location'), str) and location_from_school_line(data['location'], source):
         data['location'] = None
     if isinstance(data.get('skills'), list):
-        data['skills'] = add_document_skills(data['skills'], source)
+        data['skills'] = add_document_skills(data['skills'], source, data.get('languages'))
+    if data.get('gpa') is None and 'gpa' not in variants:
+        grade = gpa_from_document(source)
+        if grade:
+            data['gpa'] = grade[0]
+            if data.get('gpa_scale') is None and 'gpa_scale' not in variants:
+                data['gpa_scale'] = grade[1]
     data['major'] = major_only(data.get('major'))
     if 'major' in variants:
         merged = {}

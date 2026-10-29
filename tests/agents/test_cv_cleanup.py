@@ -293,3 +293,74 @@ def test_majors_links_and_a_college_town():
     assert drop_bare_links(['LinkedIn', 'GitHub: example-user']) == ['GitHub: example-user']
     source = 'RIYA EXAMPLE\n+91 5550100200\nEDUCATION\nExample College of Engineering Exampletown, India'
     assert tidy_scalars({'location': 'India', 'education': []}, {}, source)[0]['location'] is None
+
+
+# --- jobs, degrees, GPA and languages from the synthetic CV run (1.3.5) ------------------
+
+from agents_service.agents.cv.cleanup import gpa_from_document  # noqa: E402
+from agents_service.agents.cv.source_records import layout_entries  # noqa: E402
+
+
+def jobs(records):
+    return [(r['title'], r['organization'], r['start_date'], r['end_date']) for r in records]
+
+
+def test_a_title_and_employer_split_by_one_comma():
+    source = (
+        'EXPERIENCE\nSoftware Engineer, Example Corp, Jan 2022 - Present\n'
+        'Data Analyst Intern, Sample Labs, Jun 2021 - Dec 2021\n'
+        'Engineer, Platform, Example Corp, 2019 - 2020\nEDUCATION\nB.S. Example'
+    )
+    assert jobs(layout_entries(source, 'work')) == [
+        ('Software Engineer', 'Example Corp', 'Jan 2022', 'Present'),
+        ('Data Analyst Intern', 'Sample Labs', 'Jun 2021', 'Dec 2021'),
+        # Two commas: unclear, so the line stays the title.
+        ('Engineer, Platform, Example Corp', None, '2019', '2020'),
+    ]
+
+
+def test_a_title_line_above_an_employer_with_dates():
+    source = (
+        'Work History\nMechanical Engineer\nFictional Motors (Mar 2020 to Present)\n'
+        'Graduate Engineer\nMock Industries (Sep 2018 to Feb 2020)\n\nTechnical Skills\n• Python'
+    )
+    assert jobs(layout_entries(source, 'work')) == [
+        ('Mechanical Engineer', 'Fictional Motors', 'Mar 2020', 'Present'),
+        ('Graduate Engineer', 'Mock Industries', 'Sep 2018', 'Feb 2020'),
+    ]
+    # A finished description sentence above an employer line is not a title.
+    described = 'Experience\nExample Corp (2019 - 2020)\nBuilt the reports.\nSample Labs (2020 - 2021)'
+    assert [job[0] for job in jobs(layout_entries(described, 'work'))] == ['Example Corp', 'Sample Labs']
+
+
+def test_bs_ms_and_beng_are_degrees_for_the_graduation_year():
+    for title in ('B.S. Computer Science', 'M.S. in Electrical Engineering', 'BEng Mechanical Engineering'):
+        education = [{'title': title, 'organization': 'Example University', 'end_date': '2021'}]
+        data = tidy_scalars({'graduation_year': 2021, 'education': education}, {}, 'Example 2021')[0]
+        assert data['graduation_year'] == 2021
+
+
+def test_a_gpa_written_with_its_scale_is_read_from_the_document():
+    data, _ = tidy_scalars({'gpa': None, 'gpa_scale': None, 'education': []}, {}, 'Example\nCGPA: 3.9/4.0')
+    assert data['gpa'] == {'value': 3.9, 'evidence': 'CGPA: 3.9/4.0'}
+    assert data['gpa_scale'] == {'value': '4.0', 'evidence': 'CGPA: 3.9/4.0'}
+    # Two different grades, a grade above its scale, or no scale: no guess.
+    assert gpa_from_document('GPA 3.9/4.0\nGPA 3.5/4.0') is None
+    assert gpa_from_document('GPA 9.1/4.0') is None
+    assert gpa_from_document('Current CGPA: 8.7') is None
+    # The model's own GPA is kept.
+    assert tidy_scalars({'gpa': 3.7, 'education': []}, {}, 'CGPA: 3.9/4.0')[0]['gpa'] == 3.7
+
+
+def test_spoken_languages_after_the_skills_list_are_not_skills():
+    source = 'Technical Skills\n• C++\n• MATLAB\n\nLanguages: English | Korean'
+    skills = add_document_skills(['C++'], source, ['English', 'Korean'])
+    assert skills == ['C++', 'MATLAB']
+
+
+def test_a_name_or_a_title_is_not_a_summary():
+    assert clean_summary('Daniel Example') is None
+    assert clean_summary('Mechanical Engineer') is None
+    assert clean_summary('Mechanical engineer with five years in design.') == (
+        'Mechanical engineer with five years in design.'
+    )
