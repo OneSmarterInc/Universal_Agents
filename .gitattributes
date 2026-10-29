@@ -1,0 +1,5 @@
+# Files run or read inside Linux containers keep Linux line endings on Windows checkouts.
+*.sh text eol=lf
+deploy/Caddyfile text eol=lf
+Dockerfile text eol=lf
+compose.yaml text eol=lf

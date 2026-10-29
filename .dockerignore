@@ -1,0 +1,6 @@
+*
+!pyproject.toml
+!README.md
+!agents_service/
+!accuracy/
+**/__pycache__

@@ -1,0 +1,117 @@
+# Universal Agents on one machine: PostgreSQL, database upgrade, API, worker, Ollama and HTTPS.
+# Settings come from .env (see .env.example); docs/deploying.md has the steps.
+#
+#   Server (Ollama in Docker, HTTPS):   docker compose --profile ollama --profile https up -d --build
+#   Laptop (Ollama already on Windows): docker compose up -d --build
+#     with AGENTS_DOCKER_MODEL_URL=http://host.docker.internal:11434/v1 in .env
+
+x-agents: &agents
+  build: .
+  image: universal-agents:${AGENTS_IMAGE_TAG:-local}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    AGENTS_DATABASE_URL: postgresql+psycopg://agents:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/agents
+    AGENTS_DATA_DIR: /data
+    AGENTS_MODEL_BASE_URL: ${AGENTS_DOCKER_MODEL_URL:-http://ollama:11434/v1}
+    # The model is on the private Docker network.
+    AGENTS_MODEL_ALLOW_HTTP: 'true'
+  volumes:
+    - files:/data
+  extra_hosts:
+    - host.docker.internal:host-gateway
+
+services:
+  db:
+    image: postgres:16.10-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agents
+      POSTGRES_DB: agents
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U agents -d agents]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    <<: *agents
+    restart: 'no'
+    command: [init-db]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *agents
+    command: [serve, --host, 0.0.0.0, --port, '8000', --workers, '${AGENTS_API_PROCESSES:-2}']
+    ports:
+      # Only this machine; the internet reaches the API through Caddy (HTTPS).
+      - 127.0.0.1:${AGENTS_API_PORT:-8000}:8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *agents
+    command: [worker]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      replicas: ${AGENTS_WORKERS:-1}
+
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:${OLLAMA_VERSION:-0.40.6}
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 10s
+      retries: 30
+
+  # Builds kormic-local from the checked file in ./models (deploy/fetch-model.sh), once per start.
+  model-init:
+    profiles: [ollama]
+    image: ollama/ollama:${OLLAMA_VERSION:-0.40.6}
+    restart: 'no'
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: [ollama, create, kormic-local, -f, /models/Modelfile]
+    volumes:
+      - ./models:/models:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  caddy:
+    profiles: [https]
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      AGENTS_DOMAIN: ${AGENTS_DOMAIN:-localhost}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - api
+
+volumes:
+  db:
+  files:
+  ollama:
+  caddy:

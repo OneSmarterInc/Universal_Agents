@@ -1,0 +1,11 @@
+# Ollama on an NVIDIA GPU (AWS g5/g6). Needs the NVIDIA driver and nvidia-container-toolkit.
+#   docker compose -f compose.yaml -f deploy/compose.gpu.yaml --profile ollama --profile https up -d --build
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

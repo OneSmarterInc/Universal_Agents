@@ -42,6 +42,26 @@ agents model-check
 `AGENTS_MODEL_CONTEXT_TOKENS` must equal `num_ctx`. Thinking stays off through
 `AGENTS_MODEL_REASONING_EFFORT=none` (the default for Ollama).
 
+### Recommended for servers: the checked Q8_0 file
+
+`ollama pull qwen3:1.7b` gives whatever the Ollama registry holds that day (Q4_K_M).
+For a server, download Qwen's own file once, check it, and build `kormic-local` from it:
+
+| | |
+|---|---|
+| Source | `Qwen/Qwen3-1.7B-GGUF` on Hugging Face, revision `90862c4b9d2787eaed51d12237eafdfe7c5f6077` |
+| File | `Qwen3-1.7B-Q8_0.gguf`, 1,834,426,016 bytes |
+| SHA256 | `061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a` |
+| Licence | Apache-2.0 (keep Qwen's licence notice with the file) |
+
+```
+sha256sum Qwen3-1.7B-Q8_0.gguf   # must match the SHA256 above
+```
+
+Use the Modelfile above with `FROM ./Qwen3-1.7B-Q8_0.gguf` in place of `FROM qwen3:1.7b`, then
+`ollama create kormic-local -f Modelfile` and `agents model-check`. Q8_0 is closer to the original
+model than Q4_K_M but larger and slower on a CPU; run `agents accuracy` after switching.
+
 ## Ollama on another machine
 
 ```

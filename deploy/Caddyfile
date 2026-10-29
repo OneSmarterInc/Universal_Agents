@@ -1,0 +1,14 @@
+# HTTPS in front of the API. Caddy gets and renews the certificate for AGENTS_DOMAIN
+# (its DNS record must point at this server, and ports 80 and 443 must be open).
+{$AGENTS_DOMAIN} {
+	# Largest upload: 5 LinkedIn screenshots of 10 MB each, plus the form.
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy api:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}
