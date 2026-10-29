@@ -136,6 +136,23 @@ def _title_employer_header(lines, i, allowed, parts):
     )
 
 
+def _title_above_employer(lines, i, allowed, parts, consumed):
+    """A work entry written as a title line, then "Employer (dates)": "Firmware Engineer" /
+    "Demo Devices (Aug 2019 to Present)". The title line starts the entry: it follows the
+    heading, a blank line or the previous entry's header."""
+    title = lines[i - 1].strip() if i - 1 in allowed else ''
+    return (
+        len(parts) == 1
+        and i - 1 > consumed
+        and _short_label(title)
+        and not date_candidates(title)
+        and not BULLET.match(title)
+        and not DETAIL_LABEL.match(title)
+        and not title[0].islower()
+        and (i - 2 not in allowed or not lines[i - 2].strip() or i - 2 == consumed)
+    )
+
+
 def _next_is_bullet(lines, i, allowed):
     return i + 1 in allowed and bool(BULLET.match(lines[i + 1]))
 
@@ -202,6 +219,14 @@ def _headers(lines, ids, kind, inside=frozenset()):
             continue
         if continuation:
             continue
+        if (
+            date_candidates(line)
+            and kind == 'work'
+            and _title_above_employer(lines, i, allowed, parts, consumed)
+        ):
+            headers.append((i - 1, i, [lines[i - 1].strip(), *parts]))
+            consumed = i
+            continue
         if date_candidates(line):
             headers.append((i, i, parts))
         elif i + 1 in allowed and _starts_with_date(lines[i + 1]) and not line.rstrip().endswith('.'):
@@ -236,13 +261,21 @@ def _description_ids(ids, lines, last, following):
     return description_ids
 
 
-def _title_and_organization(kind, parts):
+def _title_and_organization(kind, parts, dated=False):
     if kind != 'work':
         return parts[0], None
     if len(parts) >= 2:
         return parts[0], parts[1]
     match = AT.match(parts[0])
-    return match.groups() if match else (parts[0], None)
+    if match:
+        return match.groups()
+    # "Software Engineer, Example Corp, Jan 2022": one comma between title and employer on a
+    # dated line. More commas ("Engineer, Platform, Example Corp") or no date
+    # ("Member, Example Club" is a role) stay in the title.
+    title, comma, organization = parts[0].partition(', ')
+    if dated and comma and ',' not in title + organization and title.strip() and organization.strip():
+        return title, organization
+    return parts[0], None
 
 
 def _record(source, lines, offsets, header, description_ids, kind):
@@ -253,7 +286,7 @@ def _record(source, lines, offsets, header, description_ids, kind):
     dates = _dates_in(source, offsets[first], offsets[last] + len(lines[last]))
     if len(dates) > 2:
         return None
-    title, organization = _title_and_organization(kind, parts)
+    title, organization = _title_and_organization(kind, parts, bool(dates))
     end_line = description_ids[-1] if description_ids else last
     return Fact(
         title=title.strip(),
