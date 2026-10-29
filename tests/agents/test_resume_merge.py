@@ -1,6 +1,7 @@
 """Multi-chunk CV regressions with synthetic responses, not live model quality."""
 
 import copy
+import re
 import tempfile
 from pathlib import Path
 from unittest import TestCase as SimpleTestCase
@@ -224,6 +225,42 @@ class LayoutRecordTests(SimpleTestCase):
                 for key in ('work_experience_entries', 'projects', 'education')
                 for r in result[key]
             )
+        )
+
+    def test_a_degree_the_checks_reject_falls_back_to_the_layout(self):
+        # The model picks the degree's words but no university; the evidence
+        # check drops that record, so the plain layout line is read instead.
+        cv = (
+            'CURRICULUM VITAE\nDaniel Okafor\nMechanical Engineer\n'
+            'Education\nB.Eng. Mechanical Engineering, University of Lagos, 2012 - 2016'
+        )
+
+        def reply(**kwargs):
+            if 'education' not in kwargs['schema'].get('properties', {}):
+                return empty_reply(**kwargs)
+            index = {
+                word: int(number)
+                for number, word in re.findall(r'^(\d+): (\S+)$', kwargs['messages'][-1]['content'], re.M)
+            }
+            span = {'first': index['Mechanical'], 'last': index['Engineering']}
+            return Completion(
+                data={
+                    'education': [{'title': span, 'organization': None, 'start_date': None, 'end_date': None}]
+                }
+            )
+
+        with (
+            patch(
+                'agents_service.agents.cv.local_reader.extract_owner',
+                return_value=[{'value': 'Daniel Okafor', 'evidence': 'Daniel Okafor'}],
+            ),
+            patch('agents_service.agents.cv.local_reader.provider') as factory,
+        ):
+            factory.return_value.__enter__.return_value.generate.side_effect = reply
+            result = extract_local_resume(cv, {})
+        self.assertEqual(
+            [(e['title'], e['organization']) for e in result['education']],
+            [('B.Eng. Mechanical Engineering', 'University of Lagos')],
         )
 
     def test_layout_reader_cases(self):

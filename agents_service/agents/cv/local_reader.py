@@ -157,7 +157,7 @@ def _section_request(fields, chunk, text_first=False):
     return schema, system, chunk
 
 
-def _education(chunk, reply):
+def _education(chunk, reply, supported_resume):
     # Small models often select wrong token spans or none. A clean
     # common layout is then read without the model; an unclear layout
     # keeps the model's failure.
@@ -167,9 +167,10 @@ def _education(chunk, reply):
         education = source_education.layout_education(chunk)
         if education is None:
             raise
+    kept = supported_resume({'education': education, 'warnings': []}, chunk)['education']
     layout = source_education.layout_education(chunk)
-    if layout and len(layout) > len(education):
-        education = layout  # the document shows more entries plainly than the model found
+    if layout and len(layout) > len(kept):
+        education = layout  # the document shows more entries plainly than the model's checked answer
     return {'education': education}
 
 
@@ -214,7 +215,7 @@ def _checked_section(fields, chunk, schema, reply, supported_resume):
     if reply.finish != 'stop':
         raise AIError('length' if reply.finish == 'length' else 'format')
     if fields == ('education',):
-        parsed = _education(chunk, reply)
+        parsed = _education(chunk, reply, supported_resume)
     elif fields in (('work_experience_entries',), ('projects',)):
         parsed = _records(fields, chunk, schema, reply, supported_resume)
     elif fields in (('certifications',), ('awards',)):
