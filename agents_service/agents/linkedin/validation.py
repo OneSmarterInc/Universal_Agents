@@ -96,8 +96,14 @@ def clean_text(text: str, screenshot: bool = False) -> str:
         first = False
         if screenshot and (UI_NOISE_LINE.fullmatch(clean) or _window_chrome(clean)):
             continue
+        if screenshot:
+            clean = OCR_ROMAN.sub(lambda m: m.group(1) + m.group(2).replace('l', 'I'), clean)
         lines.append(clean)
     return '\n'.join(lines).strip()
+
+
+# OCR reads the Roman numeral III as "Ill" ("Level Ill Python Certification").
+OCR_ROMAN = re.compile(r'\b((?:Level|Part|Grade|Phase|Tier|Stage|Class)\s+)((?=[Il]*l)[Il]{2,3})\b')
 
 
 UI_NOISE_LINE = re.compile(
@@ -499,6 +505,7 @@ def _generic_item_supported(item: dict, source: str) -> bool:
     return bool(
         item.get('name')
         and not FIELD_NOISE.search(item.get('name', ''))
+        and not HEADING_COUNT.match(item.get('name', ''))
         and (
             CERTIFICATE_LANGUAGE.search(evidence)
             or COURSE_TITLE.search(item.get('name', ''))
@@ -542,6 +549,7 @@ def _sanitize_item(item, source):
                     break
     if not evidence_supported(evidence, source):
         return None
+    evidence = _widened(evidence, item, source)
     item['evidence'] = evidence
     for key, value in list(item.items()):
         if key == 'evidence':
@@ -551,6 +559,40 @@ def _sanitize_item(item, source):
         elif value and not value_supported(value, evidence):
             item[key] = None
     return item
+
+
+WIDEN_LINES = 3
+
+
+def _widened(evidence, item, source):
+    """The quote and up to three lines right under it, when the entry's other values are there.
+
+    A small model often quotes only an entry's first line ("Example University") while
+    it read the degree and the years from the lines below. The quote grows line by line,
+    never past a blank line (the next entry), and only as far as those values need.
+    """
+    missing = [
+        value
+        for key, value in item.items()
+        if key != 'evidence' and isinstance(value, str) and value and not value_supported(value, evidence)
+    ]
+    quote = evidence.strip()
+    start = source.find(quote) if quote else -1
+    if not missing or start < 0:
+        return evidence
+    end = start + len(quote)
+    for _ in range(WIDEN_LINES):
+        if not source.startswith('\n', end):
+            break
+        line_end = source.find('\n', end + 1)
+        line_end = len(source) if line_end < 0 else line_end
+        if not source[end + 1 : line_end].strip():
+            break
+        end = line_end
+        widened = source[start:end]
+        if all(value_supported(value, widened) for value in missing):
+            return widened
+    return evidence
 
 
 def validate_data(data, source, section='AUTO'):
@@ -611,11 +653,19 @@ def _tidy_education(data):
 
 
 LOCATION_NOISE = r'\b(?:intern|engineer|company)\b|@'
+# A place is words of letters ("Pune, Maharashtra, India", "Greater Boston Area") with
+# a capitalised word of three letters or more; no digits or symbols.
+PLACE = re.compile(r"(?=.*\b[A-Z][^\W\d_]{2,})[^\W\d_][^\W\d_ .,'’()&/-]*(?:[ .,'’()&/-]+[^\W\d_]+)*\.?")
+
+# A section heading with its count ("Skills (12)", "Licenses & certifications (3)").
+HEADING_COUNT = re.compile(r'^\W*[^\W\d_][^\d()]{0,40}\(\s*\d+\s*\)\W*$')
 
 
 def _location_supported(item, source):
     if re.search(LOCATION_NOISE, item.get('evidence', ''), re.I):
         return False
+    if not PLACE.fullmatch(_clean_field(item.get('value'))):
+        return False  # "t 32 = ep": icons of the top menu read by OCR
     supporting_lines = [line for line in source.splitlines() if value_supported(item.get('value'), line)]
     return any(not re.search(LOCATION_NOISE + r'|\|', line, re.I) for line in supporting_lines)
 
