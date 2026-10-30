@@ -257,7 +257,50 @@ def layout_text(textpage):
     runs = _runs(textpage)
     if not runs or not _stored_order_scrambled(runs):
         return ''
-    return '\n'.join(_lines(runs))
+    return '\n'.join(line for column in _columns(runs) for line in _lines(column))
+
+
+def _columns(runs):
+    """The runs split into side-by-side columns in reading order, or [runs] when there are none.
+
+    Read row by row across the whole page, a sidebar's lines are mixed into the
+    main text ("Akola, Maharashtra   Projects"), so each column is read on its own.
+    A split needs a clear gap that no run crosses, a fair share of the text on
+    each side, and sides that do not pair up row by row (a title with its date
+    at the right edge is one entry, not two columns). The column whose text
+    starts higher on the page comes first.
+    """
+    total = sum(len(run[4]) for run in runs)
+    best = None
+    for split in sorted({run[0] for run in runs}):
+        left = [run for run in runs if run[2] <= split]
+        right = [run for run in runs if run[0] >= split]
+        if len(left) + len(right) < len(runs) or min(len(left), len(right)) < 3:
+            continue
+        if min(sum(len(run[4]) for run in side) for side in (left, right)) < 0.2 * total:
+            continue
+        gap = split - max(run[2] for run in left)
+        if best is None or gap > best[0]:
+            best = (gap, left, right)
+    if best is None or best[0] < MIN_COLUMN_GAP:
+        return [runs]
+    _, left, right = best
+    if _paired_rows(left, right) > 0.5 * min(len(left), len(right)):
+        return [runs]
+    return sorted((left, right), key=lambda side: -max(run[3] for run in side))
+
+
+MIN_COLUMN_GAP = 6
+
+
+def _paired_rows(left, right):
+    """How many runs of `right` sit on the same row as a run of `left`."""
+    count = 0
+    for run in right:
+        middle, height = (run[1] + run[3]) / 2, max(run[3] - run[1], 1)
+        if any(abs((other[1] + other[3]) / 2 - middle) <= 0.5 * height for other in left):
+            count += 1
+    return count
 
 
 def _runs(textpage):

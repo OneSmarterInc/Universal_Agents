@@ -77,6 +77,63 @@ class TextLayerTests(SimpleTestCase):
         self.assertFalse(supported_owner('John Smith', 'Worked with John Smith | Acme', source))
 
 
+def run(left, top, text):
+    """A PDF text piece: (left, bottom, right, top, text), about 5 points a letter."""
+    return (left, top - 10, left + 5 * len(text), top, text)
+
+
+class ColumnTests(SimpleTestCase):
+    def read(self, runs):
+        from agents_service.documents.reading import _columns, _lines
+
+        return [line for column in _columns(runs) for line in _lines(column)]
+
+    def test_a_sidebar_and_a_main_column_are_read_one_after_the_other(self):
+        # Seen in a real CV template: read row by row, "Akola, Maharashtra   Projects".
+        main = [
+            run(270, 810, 'Asha Example'),
+            run(270, 680, 'Summary'),
+            run(270, 640, 'Developer with Java and SQL'),
+            run(270, 520, 'Projects'),
+            run(270, 480, 'Clinic Management System'),
+            run(270, 465, '2021 - 2022'),
+            run(270, 280, 'Achievements'),
+            run(276, 220, 'Typing speed 40'),
+        ]
+        sidebar = [
+            run(40, 615, 'Contact'),
+            run(60, 525, 'Akola, Maharashtra'),
+            run(40, 475, 'Technical Skills'),
+            run(40, 435, 'Java'),
+            run(40, 270, 'Education'),
+            run(40, 225, 'Masters in Computer Applications'),
+            run(40, 210, 'Example College, Wardha'),
+        ]
+        self.assertEqual(self.read(sidebar + main), [r[4] for r in main + sidebar])
+
+    def test_a_date_at_the_right_edge_stays_on_its_entry_line(self):
+        runs = [
+            run(40, 700, 'Experience'),
+            run(40, 680, 'Data Analyst, Acme Health'),
+            run(450, 680, 'Jan 2021 - Present'),
+            run(40, 660, 'Built weekly reports for clinics'),
+            run(40, 640, 'Junior Analyst, Example Labs'),
+            run(450, 640, 'Jun 2019 - Dec 2020'),
+            run(40, 620, 'Cleaned survey data'),
+            run(40, 600, 'Intern, Sample Clinic'),
+            run(450, 600, 'Jan 2019 - May 2019'),
+        ]
+        lines = self.read(runs)
+        self.assertIn('Data Analyst, Acme Health   Jan 2021 - Present', lines)
+        self.assertIn('Intern, Sample Clinic   Jan 2019 - May 2019', lines)
+
+    def test_a_page_with_no_gap_is_one_column(self):
+        from agents_service.documents.reading import _columns
+
+        runs = [run(40, 700 - 20 * i, f'Line {i} of a single column of text') for i in range(6)]
+        self.assertEqual(_columns(runs), [runs])
+
+
 class DashAndEducationTests(SimpleTestCase):
     def test_dropped_dashes_come_back_from_the_other_layer(self):
         from agents_service.documents.reading import restore_dashes
