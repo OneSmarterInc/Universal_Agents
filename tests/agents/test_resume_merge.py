@@ -227,11 +227,10 @@ class LayoutRecordTests(SimpleTestCase):
             )
         )
 
-    def education_read_from(self, title, organization):
+    def education_read_from(self, title, organization, education=None):
         """The education read when the model selects these words (first, last) of the degree line."""
-        cv = (
-            'CURRICULUM VITAE\nDaniel Okafor\nMechanical Engineer\n'
-            'Education\nB.Eng. Mechanical Engineering, University of Lagos, 2012 - 2016'
+        cv = 'CURRICULUM VITAE\nDaniel Okafor\nMechanical Engineer\nEducation\n' + (
+            education or 'B.Eng. Mechanical Engineering, University of Lagos, 2012 - 2016'
         )
 
         def reply(**kwargs):
@@ -272,6 +271,17 @@ class LayoutRecordTests(SimpleTestCase):
         self.assertEqual(
             self.education_read_from(('Engineering', 'University'), ('of', 'Lagos')),
             [('B.Eng. Mechanical Engineering', 'University of Lagos')],
+        )
+
+    def test_the_school_the_model_left_out_comes_from_the_layout(self):
+        # "SGBAU" names no school word, so only the degree / school / dates layout finds it.
+        self.assertEqual(
+            self.education_read_from(
+                ('Bachelor', 'Applications'),
+                None,
+                'Bachelor of Computer Applications\nSGBAU, Amravati, Maharashtra\nMay 2014 - May 2017',
+            ),
+            [('Bachelor of Computer Applications', 'SGBAU')],
         )
 
     def test_a_clean_model_reading_of_the_degree_is_kept(self):

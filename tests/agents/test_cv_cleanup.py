@@ -364,3 +364,39 @@ def test_a_name_or_a_title_is_not_a_summary():
     assert clean_summary('Mechanical engineer with five years in design.') == (
         'Mechanical engineer with five years in design.'
     )
+
+
+def test_typing_speeds_are_not_languages():
+    from agents_service.agents.cv.evidence import supported_resume
+
+    source = 'Achievements\nTyping :\nEnglish 30\nEnglish 40\nLanguages: French B2, English C1, Hindi 90%'
+    languages = ['English 30', 'English 40', 'French B2', 'English C1', 'Hindi 90%']
+    kept = supported_resume({'languages': languages, 'warnings': []}, source)['languages']
+    assert kept == ['French B2', 'English C1', 'Hindi 90%']
+
+
+TWO_COLUMN_EDUCATION = (
+    'Education\n'
+    'Masters in Computer Applications\nExample Agnihotri College, Wardha\nMay 2017 - May 2020\n'
+    'Bachelor of Computer Applications\nSGBAU, Amravati, Maharashtra\nMay 2014 - May 2017\n'
+    'Higher Secondary\nSample Khandelwal College,\nAkola\nMay 2012 - May 2014'
+)
+
+
+def test_a_school_without_a_school_word_and_a_school_on_two_lines():
+    from agents_service.agents.cv.source_education import layout_education
+
+    records = layout_education(TWO_COLUMN_EDUCATION)
+    assert [(r['title'], r['organization'], r['start_date'], r['end_date']) for r in records] == [
+        ('Masters in Computer Applications', 'Example Agnihotri College', 'May 2017', 'May 2020'),
+        ('Bachelor of Computer Applications', 'SGBAU', 'May 2014', 'May 2017'),
+        ('Higher Secondary', 'Sample Khandelwal College', 'May 2012', 'May 2014'),
+    ]
+
+
+def test_a_grade_line_is_not_taken_as_the_school():
+    from agents_service.agents.cv.source_education import layout_education
+
+    records = layout_education('Education\nBachelor of Science\nCGPA 8.1\n2016 - 2019')
+    assert [(r['title'], r['organization']) for r in records or []] != [('Bachelor of Science', 'CGPA 8.1')]
+    assert all(r['organization'] is None for r in records or [])

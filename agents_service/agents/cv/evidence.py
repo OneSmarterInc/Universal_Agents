@@ -92,6 +92,9 @@ PROGRAMMING = re.compile(
     r'r|sql|mysql|html5?|css3?|scala|perl|matlab|bash|shell|solidity|julia)\b',
     re.I,
 )
+# Words then a bare number: "English 40" is a typing speed or a mark; "English C1",
+# "French B2" and "English 90%" are kept.
+BARE_SCORE = re.compile(r'^[^\W\d_][^\d]*?[\s:-]+\d{1,3}$')
 
 
 def _is_link(value):
@@ -170,11 +173,14 @@ def supported_resume(data, source):
     # Links are web addresses or profile handles, never an email or a phone number.
     data['links'] = [link for link in data.get('links') or [] if _is_link(link)]
     # Languages are the languages a person speaks; programming languages are skills.
+    # A name and a bare number ("English 40" under "Typing:") is a score, not a language.
     skills = {canonical(skill) for skill in data.get('skills') or []}
     data['languages'] = [
         language
         for language in data.get('languages') or []
-        if canonical(language) not in skills and not PROGRAMMING.search(language)
+        if canonical(language) not in skills
+        and not PROGRAMMING.search(language)
+        and not BARE_SCORE.match(language.strip())
     ]
     # Education belongs in education: a degree under other_information is the model
     # filing it in the wrong place, and the education reader has it already.

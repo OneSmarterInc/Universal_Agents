@@ -172,8 +172,19 @@ def _education(chunk, reply, supported_resume):
     if layout and len(layout) > len(kept):
         education = layout  # the document shows more entries plainly than the model's checked answer
     elif layout:
-        education = [_cleaner_split(record, layout) for record in education]
+        education = [_layout_reading(record, layout) for record in education]
     return {'education': education}
+
+
+EDUCATION_PARTS = ('title', 'organization', 'start_date', 'end_date')
+
+
+def _adds_to(plain, record):
+    """True when the layout's record says all the model's does, and more."""
+    agrees = all(plain[part] == record[part] for part in EDUCATION_PARTS if record[part])
+    return agrees and sum(bool(plain[p]) for p in EDUCATION_PARTS) > sum(
+        bool(record[p]) for p in EDUCATION_PARTS
+    )
 
 
 def _school_misplaced(record):
@@ -183,18 +194,19 @@ def _school_misplaced(record):
     )
 
 
-def _cleaner_split(record, layout):
-    """The layout's reading of the same line when it puts degree and school in their places.
+def _layout_reading(record, layout):
+    """The layout's reading of the same entry when it is cleaner or fuller than the model's.
 
-    A small model sometimes cuts "B.Eng. Mechanical Engineering, University of Lagos"
-    into "Engineering, University" and "of Lagos": every word is in the CV, so the
-    evidence check keeps it.
+    Cleaner: a small model sometimes cuts "B.Eng. Mechanical Engineering, University of
+    Lagos" into "Engineering, University" and "of Lagos"; every word is in the CV, so
+    the evidence check keeps it. Fuller: the same degree with the school or the
+    dates the model left out.
     """
-    if not _school_misplaced(record):
-        return record
     for plain in layout:
-        same_line = record['evidence'] in plain['evidence'] or plain['evidence'] in record['evidence']
-        if same_line and not _school_misplaced(plain):
+        same_entry = record['evidence'] in plain['evidence'] or plain['evidence'] in record['evidence']
+        if not same_entry:
+            continue
+        if (_school_misplaced(record) and not _school_misplaced(plain)) or _adds_to(plain, record):
             return plain
     return record
 

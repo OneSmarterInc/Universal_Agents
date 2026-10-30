@@ -382,10 +382,19 @@ def _education_region(lines):
 
 
 def _entry_block(lines, region, region_ids, index, column, following):
-    """The degree line and up to two following lines of the same block."""
+    """The degree line and up to two following lines of the same block.
+
+    A third following line is taken only when it holds the entry's dates and no
+    line before it did: the school's name ran onto two lines.
+    """
     block = [(index, column)]
     for i, c in region[region_ids.index(index) + 1 :]:
-        if i == following or not lines[i].strip() or len(block) == 3 or i != block[-1][0] + 1:
+        if i == following or not lines[i].strip() or i != block[-1][0] + 1:
+            break
+        dates_below = date_candidates(lines[i][c:]) and not any(
+            date_candidates(lines[j][k:]) for j, k in block
+        )
+        if len(block) == 4 or (len(block) == 3 and not dates_below):
             break
         block.append((i, c))
     return block
@@ -421,6 +430,8 @@ def _block_record(source, lines, offsets, block):
     else:
         title, school = split_degree_school(title, grade_only=True)
         organization = organization or school
+    if organization is None:
+        organization = _school_line(lines, offsets, block)
     if organization and CONTINUES.search(organization):
         # "... College of" / "Engineering, Shegaon": the name goes on to the next line.
         later = [t for _, t in segments if t not in (title, organization)]
@@ -443,6 +454,28 @@ def _block_record(source, lines, offsets, block):
         end_date=dates[-1].group() if dates else None,
         evidence=source[lo:hi].strip(),
     ).model_dump()
+
+
+def _school_line(lines, offsets, block):
+    """The school in a degree / school / dates block when its name has no school word.
+
+    "Bachelor of Computer Applications" / "SGBAU, Amravati, Maharashtra" / "May 2017 -
+    May 2020": the plain line between the degree and its dates is the school (its
+    first part, as for a named college). A line with digits or a degree is not.
+    """
+    if len(block) != 3:
+        return None
+    (degree_line, _), (line, column), (dates_line, dates_column) = block
+    text = lines[line][column:].strip()
+    if (
+        date_candidates(lines[degree_line])
+        or not date_candidates(lines[dates_line][dates_column:])
+        or re.search(r'\d', text)
+        or DEGREE.search(text)
+        or not text[:1].isupper()
+    ):
+        return None
+    return next((t for _, t in _segments(lines, offsets, [(line, column)])), None)
 
 
 def _without_dates(title):
